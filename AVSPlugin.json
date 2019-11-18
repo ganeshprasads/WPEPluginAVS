@@ -1,0 +1,45 @@
+{
+  "$schema": "plugin.schema.json",
+  "info": {
+    "title": "The Alexa Voice Service Headless Client",
+    "callsign": "WebKitBrowser",
+    "locator": "libWPEFrameworkAVS.so",
+    "status": "alpha",
+    "description": "The Alexa Voice Service Headless Client serves as a personal assistant",
+    "version": "1.0"
+  },
+  "configuration": {
+    "type": "object",
+    "properties": {
+      "configuration": {
+        "type": "object",
+        "properties": {
+          "configfile": {
+            "type": "string",
+            "description": "The main configutation file path"
+          },
+          "pathtokwdinput": {
+            "type": "string",
+            "description": "Path to directory with Key Word Detection input files"
+          },
+          "logLevel": {
+            "type": "string",
+            "description": "The main configutation file path"
+          }
+        },
+        "required": [
+          "configfile",
+          "logLevel"
+        ]
+      }
+    },
+    "required": [
+      "callsign",
+      "classname",
+      "locator"
+    ]
+  },
+  "interface": {
+    "$ref": "{interfacedir}/AVS.json#"
+  }
+}
