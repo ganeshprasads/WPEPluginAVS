@@ -66,11 +66,16 @@ set_target_properties(${MODULE_NAME} PROPERTIES
 add_subdirectory("Impl/AVSDevice/")
 
 if(PLUGIN_AVS_ENABLE_SMART_SCREEN_SUPPORT)
+    add_definitions(-DENABLE_SMART_SCREEN_SUPPORT)
     add_subdirectory("Impl/SmartScreen/")
     target_link_libraries(${MODULE_NAME} PRIVATE SmartScreen)
 endif()
 
 add_subdirectory("Integration")
+
+target_include_directories(${MODULE_NAME} PUBLIC
+    "${AVSDSDK_INCLUDE_DIRS}"
+    "${THUNDER_INCLUDE_DIRS}")
 
 target_link_libraries(${MODULE_NAME}
     PRIVATE

@@ -237,9 +237,6 @@ namespace Plugin {
         }
 
         auto sampleLen = result->endSampleIndex - result->beginSampleIndex;
-        TRACE_L1((_T("Detection Callback Results:\n"
-                     "confidenence = %d, beginSampleIndex = %d, endSampleIndex = %d, m_streamReader->tell() = %d, sampleLen = %d, keyword = %s"),
-            result->confidence, result->beginSampleIndex, result->endSampleIndex, pryonKWD->m_streamReader->tell(), sampleLen, result->keyword));
 
         pryonKWD->notifyKeyWordObservers(
             pryonKWD->m_stream,

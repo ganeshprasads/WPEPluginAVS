@@ -18,7 +18,7 @@
  */
 
 #pragma once
-
+#include "ThunderInputManager.h"
 #include "ThunderVoiceHandler.h"
 
 #include <WPEFramework/interfaces/IAVSClient.h>
@@ -29,24 +29,48 @@
 
 #include <vector>
 
+#include <VoiceToApps/VoiceToApps.h>
+#include <VoiceToApps/VideoSkillInterface.h>
+
 namespace WPEFramework {
 namespace Plugin {
 
     class SmartScreen
         : public WPEFramework::Exchange::IAVSClient,
+          public Core::Thread,
           private alexaSmartScreenSDK::sampleApp::SampleApplication {
     public:
         SmartScreen()
             : _service(nullptr)
+            , m_thunderInputManager(nullptr)
             , m_thunderVoiceHandler(nullptr)
         {
+           Run();
         }
 
         SmartScreen(const SmartScreen&) = delete;
         SmartScreen& operator=(const SmartScreen&) = delete;
-        ~SmartScreen() {}
+        ~SmartScreen()
+        {
+            Stop();
+            Wait(Thread::STOPPED | Thread::BLOCKED, Core::infinite);
+        }
+        void CreateSQSWorker(void)
+        {
+            std::cout << "Starting SQS Thread.." << std::endl;
+            while((IsRunning() == true)){ handleReceiveSQSMessage(); }
+            return;
+        }
 
     private:
+        virtual uint32_t Worker()
+        {
+            if ((IsRunning() == true)) {
+                CreateSQSWorker();
+            }
+            Block();
+            return (Core::infinite);
+        }
         class Config : public WPEFramework::Core::JSON::Container {
         public:
             Config(const Config&) = delete;
@@ -86,18 +110,21 @@ namespace Plugin {
         bool Deinitialize() override;
         Exchange::IAVSController* Controller() override;
         void StateChange(PluginHost::IShell* audioSource) override;
+        skillmapper::voiceToApps vta;
 
         BEGIN_INTERFACE_MAP(SmartScreen)
         INTERFACE_ENTRY(WPEFramework::Exchange::IAVSClient)
         END_INTERFACE_MAP
 
     private:
-        bool Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder);
+        bool Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder, const
+        std::string alexaClientConfig, const std::string smartScreenConfig);
         bool InitSDKLogs(const string& logLevel);
         bool JsonConfigToStream(std::vector<std::shared_ptr<std::istream>>& streams, const std::string& configFile);
 
     private:
         WPEFramework::PluginHost::IShell* _service;
+        std::shared_ptr<ThunderInputManager> m_thunderInputManager;
         std::shared_ptr<ThunderVoiceHandler<alexaSmartScreenSDK::sampleApp::gui::GUIManager>> m_thunderVoiceHandler;
 #if defined(KWD_PRYON)
         std::unique_ptr<alexaClientSDK::kwd::AbstractKeywordDetector> m_keywordDetector;

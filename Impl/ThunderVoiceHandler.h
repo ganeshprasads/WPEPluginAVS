@@ -157,6 +157,10 @@ namespace Plugin {
             return true;
         }
 
+	bool isStreaming() override {
+		return true;
+	}
+
         void stateChange(WPEFramework::PluginHost::IShell* audiosource)
         {
             if (audiosource->State() == WPEFramework::PluginHost::IShell::ACTIVATED) {
@@ -189,9 +193,9 @@ namespace Plugin {
             , m_callsign{ callsign }
             , m_service{ service }
             , m_voiceProducer{ nullptr }
-            , m_voiceHandler{ WPEFramework::Core::ProxyType<VoiceHandler>::Create(this) }
-            , m_interactionHandler{ interactionHandler }
             , m_isInitialized{ false }
+            , m_interactionHandler{ interactionHandler }
+            , m_voiceHandler{ WPEFramework::Core::ProxyType<VoiceHandler>::Create(this) }
         {
             m_service->AddRef();
         }

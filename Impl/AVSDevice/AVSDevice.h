@@ -18,22 +18,78 @@
  */
 
 #pragma once
-
+#include "TraceCategories.h"
 #include "ThunderInputManager.h"
 #include "ThunderVoiceHandler.h"
 
 #include <WPEFramework/interfaces/IAVSClient.h>
 
+#include <AVSCommon/AVS/Initialization/InitializationParametersBuilder.h>
 #include <AVS/KWD/AbstractKeywordDetector.h>
 #include <AVS/SampleApp/SampleApplication.h>
 
+#include <AVSCommon/SDKInterfaces/Diagnostics/ProtocolTracerInterface.h>
+#include <AVSCommon/SDKInterfaces/Endpoints/EndpointBuilderInterface.h>
+#include <AVSCommon/Utils/Configuration/ConfigurationNode.h>
+#include <AVSCommon/Utils/DeviceInfo.h>
+#include <AVSCommon/Utils/LibcurlUtils/HTTPContentFetcherFactory.h>
+#include <AVSCommon/Utils/Network/InternetConnectionMonitor.h>
+#include <acsdkAlerts/Storage/SQLiteAlertStorage.h>
+
+#include <acsdkManufactory/Manufactory.h>
+#include <ACL/Transport/HTTP2TransportFactory.h>
+#include <ACL/Transport/PostConnectSequencerFactory.h>
+#include <AVSCommon/AVS/CapabilitySemantics/CapabilitySemantics.h>
+#include <AVSCommon/AVS/Initialization/InitializationParametersBuilder.h>
+#include <AVSCommon/SDKInterfaces/PowerResourceManagerInterface.h>
+#include <AVSCommon/Utils/LibcurlUtils/LibcurlHTTP2ConnectionFactory.h>
+#include <AVSCommon/Utils/UUIDGeneration/UUIDGeneration.h>
+#include <AVSGatewayManager/AVSGatewayManager.h>
+#include <AVSGatewayManager/Storage/AVSGatewayManagerStorage.h>
+#include <SynchronizeStateSender/SynchronizeStateSenderFactory.h>
+#include <AVS/SampleApp/ExternalCapabilitiesBuilder.h>
+#include <AVSCommon/AVS/Initialization/AlexaClientSDKInit.h>
+#include <AVSCommon/SDKInterfaces/ApplicationMediaInterfaces.h>
+#include <AVSCommon/SDKInterfaces/ChannelVolumeInterface.h>
+#include <AVSCommon/SDKInterfaces/Diagnostics/DiagnosticsInterface.h>
+#include <AVSCommon/Utils/MediaPlayer/PooledMediaPlayerFactory.h>
+#include <CapabilitiesDelegate/CapabilitiesDelegate.h>
+#include <acsdkExternalMediaPlayer/ExternalMediaPlayer.h>
+#include <AVS/SampleApp/SampleApplicationComponent.h>
+#include <AVSCommon/SDKInterfaces/LocaleAssetsManagerInterface.h>
+#include <AVS/SampleApp/GuiRenderer.h>
+#include <AVS/SampleApp/SampleApplicationReturnCodes.h>
+#include <AVS/SampleApp/UserInputManager.h>
+#include <AVS/SampleApp/UIManager.h>
+#include <MediaPlayer/MediaPlayer.h>
+
+#include <acsdkNotifications/SQLiteNotificationsStorage.h>
+#include <CBLAuthDelegate/CBLAuthDelegate.h>
+#include <CBLAuthDelegate/SQLiteCBLAuthDelegateStorage.h>
+#include <CapabilitiesDelegate/CapabilitiesDelegate.h>
+#include <CapabilitiesDelegate/Storage/SQLiteCapabilitiesDelegateStorage.h>
+#include <SQLiteStorage/SQLiteMiscStorage.h>
+#include <SampleApp/CaptionPresenter.h>
+#include <SampleApp/SampleEqualizerModeController.h>
+#include <Settings/Storage/SQLiteDeviceSettingStorage.h>
+
+#include <acsdkEqualizerImplementations/InMemoryEqualizerConfiguration.h>
+#include <acsdkEqualizerImplementations/MiscDBEqualizerStorage.h>
+#include <acsdkEqualizerImplementations/SDKConfigEqualizerConfiguration.h>
+#include <acsdkEqualizerInterfaces/EqualizerInterface.h>
+#include <InterruptModel/config/InterruptModelConfiguration.h>
+
+
+
 #include <vector>
+#include <VoiceToApps/VideoSkillInterface.h>
 
 namespace WPEFramework {
 namespace Plugin {
 
     class AVSDevice
         : public WPEFramework::Exchange::IAVSClient,
+          public Core::Thread,
           private alexaClientSDK::sampleApp::SampleApplication {
     public:
         AVSDevice()
@@ -41,13 +97,31 @@ namespace Plugin {
             , m_thunderInputManager(nullptr)
             , m_thunderVoiceHandler(nullptr)
         {
+           Run();
         }
 
         AVSDevice(const AVSDevice&) = delete;
         AVSDevice& operator=(const AVSDevice&) = delete;
-        ~AVSDevice() {}
-
+        ~AVSDevice()
+        {
+            Stop();
+            Wait(Thread::STOPPED | Thread::BLOCKED, Core::infinite);
+        }
+        void CreateSQSWorker(void)
+        {
+            std::cout << "Starting SQS Thread.." << std::endl;
+            while((IsRunning() == true)){ handleReceiveSQSMessage(); }
+            return;
+        }
     private:
+        virtual uint32_t Worker()
+        {
+            if ((IsRunning() == true)) {
+                CreateSQSWorker();
+            }
+            Block();
+            return (Core::infinite);
+        }
         class Config : public WPEFramework::Core::JSON::Container {
         public:
             Config(const Config&) = delete;
@@ -90,7 +164,7 @@ namespace Plugin {
         END_INTERFACE_MAP
 
     private:
-        bool Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder);
+        bool Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder, const std::string& alexaClientConfig);
         bool InitSDKLogs(const string& logLevel);
         bool JsonConfigToStream(std::vector<std::shared_ptr<std::istream>>& streams, const std::string& configFile);
 
@@ -101,6 +175,10 @@ namespace Plugin {
 #if defined(KWD_PRYON)
         std::unique_ptr<alexaClientSDK::kwd::AbstractKeywordDetector> m_keywordDetector;
 #endif
+
+
+
+
     };
 
 }
