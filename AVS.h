@@ -22,7 +22,7 @@
 #include "Module.h"
 
 #include <interfaces/IAVSClient.h>
-#include <interfaces/JAVSController.h>
+#include  <interfaces/json/JAVSController.h>
 
 #include <AVS/SampleApp/SampleApplicationReturnCodes.h>
 
@@ -148,8 +148,10 @@ namespace Plugin {
             Config& operator=(const Config&) = delete;
 
         public:
+
             Config()
                 : Core::JSON::Container()
+                , OutOfProcess(true)
                 , Audiosource()
                 , AlexaClientConfig()
                 , SmartScreenConfig()
@@ -165,6 +167,7 @@ namespace Plugin {
                 Add(_T("kwdmodelspath"), &KWDModelsPath);
                 Add(_T("enablesmartscreen"), &EnableSmartScreen);
                 Add(_T("enablekwd"), &EnableKWD);
+                Add(_T("outofprocess"), &OutOfProcess);
             }
 
             ~Config() = default;
@@ -177,6 +180,7 @@ namespace Plugin {
             Core::JSON::String KWDModelsPath;
             Core::JSON::Boolean EnableSmartScreen;
             Core::JSON::Boolean EnableKWD;
+            Core::JSON::Boolean OutOfProcess;
         };
 
     public:

@@ -26,7 +26,7 @@ set(MODULE_NAME AVSDevice)
 set(WPEFRAMEWORK_PLUGIN_AVS_AVSDEVICE_SOURCES)
 list(APPEND WPEFRAMEWORK_PLUGIN_AVS_AVSDEVICE_SOURCES
     AVSDevice.cpp
-    ThunderInputManager.cpp
+    ../ThunderInputManager.cpp
     ../Module.cpp
     ../ThunderLogger.cpp
 )
@@ -46,9 +46,12 @@ target_include_directories(${MODULE_NAME}
     PUBLIC
         ../
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+        "${AVSDSDK_INCLUDE_DIRS}"
+        "${THUNDER_INCLUDE_DIRS}"
         ${ALEXA_CLIENT_SDK_INCLUDES})
 
 target_link_libraries(${MODULE_NAME} PRIVATE ${ALEXA_CLIENT_SDK_LIBRARIES})
+target_link_libraries(${MODULE_NAME} PRIVATE -lVoiceToApps)
 
 if(PLUGIN_AVS_ENABLE_KWD_SUPPORT)
     if(PRYON_LITE_FOUND)

@@ -19,7 +19,10 @@
 
 #include "AVSDevice.h"
 
+#if defined(KWD_PRYON)
 #include "PryonKeywordDetector.h"
+#endif
+
 #include "ThunderLogger.h"
 #include "ThunderVoiceHandler.h"
 #include "TraceCategories.h"
@@ -31,12 +34,12 @@
 #include <AVSCommon/Utils/LibcurlUtils/LibcurlHTTP2ConnectionFactory.h>
 #include <AVSCommon/Utils/Logger/LoggerSinkManager.h>
 #include <AVSCommon/Utils/Network/InternetConnectionMonitor.h>
-#include <Alerts/Storage/SQLiteAlertStorage.h>
+#include  <acsdkAlerts/Storage/SQLiteAlertStorage.h>
 #include <Audio/AudioFactory.h>
 #include <CBLAuthDelegate/CBLAuthDelegate.h>
 #include <CBLAuthDelegate/SQLiteCBLAuthDelegateStorage.h>
 #include <ContextManager/ContextManager.h>
-#include <Notifications/SQLiteNotificationsStorage.h>
+#include  <acsdkNotifications/SQLiteNotificationsStorage.h>
 #include <SQLiteStorage/SQLiteMiscStorage.h>
 #include <Settings/Storage/SQLiteDeviceSettingStorage.h>
 
@@ -59,7 +62,10 @@ namespace Plugin {
     static const std::string ENDPOINT_KEY("endpoint");
     static const std::string DISPLAY_CARD_KEY("displayCardsSupported");
 
-    // Share Data stream Configuraiton
+
+    static const std::string AUDIO_MEDIAPLAYER_POOL_SIZE_KEY("audioMediaPlayerPoolSize");
+    static const unsigned int AUDIO_MEDIAPLAYER_POOL_SIZE_DEFAULT = 2; 
+	 // Share Data stream Configuraiton
     static const size_t MAX_READERS = 10;
     static const size_t WORD_SIZE = 2;
     static const unsigned int SAMPLE_RATE_HZ = 16000;
@@ -72,7 +78,8 @@ namespace Plugin {
 
     bool AVSDevice::Initialize(PluginHost::IShell* service, const string& configuration)
     {
-        TRACE_L1("Initializing AVSDevice...");
+        
+	TRACE_L1("Initializing AVSDevice...");
 
         Config config;
         bool status = true;
@@ -116,333 +123,407 @@ namespace Plugin {
 #endif
         }
 
-        std::vector<std::shared_ptr<std::istream>> configJsonStreams;
-        if ((status == true) && (JsonConfigToStream(configJsonStreams, alexaClientConfig) == false)) {
-            TRACE(AVSClient, (_T("Failed to load alexaClientConfig")));
-            status = false;
-        }
-
-#if defined(KWD_PRYON)
-        if (enableKWD) {
-            if ((status == true) && (JsonConfigToStream(configJsonStreams, pathToInputFolder + "/localeToModels.json") == false)) {
-                TRACE(AVSClient, (_T("Failed to load localeToModels.json")));
-                status = false;
-            }
-        }
-#endif
-        if ((status == true) && (alexaClientSDK::avsCommon::avs::initialization::AlexaClientSDKInit::initialize(configJsonStreams) == false)) {
-            TRACE(AVSClient, (_T("Failed to initialize SDK!")));
-            return false;
-        }
-
-        if (status == true) {
-            status = Init(audiosource, enableKWD, pathToInputFolder);
+	if (status == true) {
+            status = Init(audiosource, enableKWD, pathToInputFolder, alexaClientConfig);
         }
 
         return status;
     }
 
-    bool AVSDevice::Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder)
+     bool AVSDevice::Init(const std::string& audiosource, const bool enableKWD, const std::string& pathToInputFolder, const std::string& alexaClientConfig)
     {
-        auto config = avsCommon::utils::configuration::ConfigurationNode::getRoot();
-
-        std::shared_ptr<avsCommon::utils::DeviceInfo> deviceInfo = avsCommon::utils::DeviceInfo::create(config);
-        if (!deviceInfo) {
-            TRACE(AVSClient, (_T("Failed to create deviceInfo")));
-            return false;
-        }
-        int firmwareVersion = static_cast<int>(avsCommon::sdkInterfaces::softwareInfo::INVALID_FIRMWARE_VERSION);
-        config[SAMPLE_APP_CONFIG_KEY].getInt(FIRMWARE_VERSION_KEY, &firmwareVersion, firmwareVersion);
-
-        auto customerDataManager = std::make_shared<registrationManager::CustomerDataManager>();
-        if (!customerDataManager) {
-            TRACE(AVSClient, (_T("Failed to create customerDataManager")));
-            return false;
-        }
-
-        // speakers and media players
-        auto httpContentFetcherFactory = std::make_shared<avsCommon::utils::libcurlUtils::HTTPContentFetcherFactory>();
-
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> speakSpeaker;
-        std::tie(m_speakMediaPlayer, speakSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-            "SpeakMediaPlayer");
-        if (!m_speakMediaPlayer || !speakSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create SpeakMediaPlayer")));
+    using namespace alexaClientSDK::sampleApp; 
+    using namespace alexaClientSDK::avsCommon::utils::mediaPlayer;
+    using namespace alexaClientSDK::avsCommon::sdkInterfaces;   
+    
+    
+    TRACE_L1("DEBUGLOG: Line count: 1, START");
+    
+    auto jsonConfig = std::make_shared<std::vector<std::shared_ptr<std::istream>>>();
+    auto configInFile = std::shared_ptr<std::ifstream>(new std::ifstream(alexaClientConfig));
+    if (!configInFile->good()) {
+        TRACE(AVSClient, (_T("Failed to read config file filename")));
             return false;
         }
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> audioSpeaker;
-        std::tie(m_audioMediaPlayer, audioSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-            "AudioMediaPlayer");
-        if (!m_audioMediaPlayer || !audioSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create AudioMediaPlayer")));
+        jsonConfig->push_back(configInFile);
+        
+#if defined(KWD_PRYON)
+    if (enableKWD) {
+        auto localeToModelsConfig = pathToInputFolder + "/localeToModels.json";
+        auto ltmConfigInFile = std::shared_ptr<std::ifstream>(new std::ifstream(localeToModelsConfig));
+        if (!ltmConfigInFile->good()) {
+            TRACE(AVSClient, (_T("Failed to read ltm config file filename")));
             return false;
         }
+        jsonConfig->push_back(ltmConfigInFile);
+    }
+#endif
+    
+    auto avsBuilder = alexaClientSDK::avsCommon::avs::initialization::InitializationParametersBuilder::create();
+    avsBuilder->withJsonStreams(jsonConfig);
+    if (!avsBuilder) {
+        TRACE(AVSClient, (_T("createInitializeParamsFailed reason nullBuilder")));
+        return false;
+    }
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> alertsSpeaker;
-        std::tie(m_alertsMediaPlayer, alertsSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_ALERTS_VOLUME,
-            "AlertsMediaPlayer");
-        if (!m_alertsMediaPlayer || !alertsSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create AlertsMediaPlayer")));
+    auto params = avsBuilder->build();  
+    alexaClientSDK::acsdkSampleApplication::SampleApplicationComponent avsAppComponent =
+        acsdkSampleApplication::getComponent(std::move(params), m_shutdownRequiredList);
+    auto avsAppFactory = alexaClientSDK::acsdkManufactory::Manufactory<
+        std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>,
+        std::shared_ptr<avsCommon::sdkInterfaces::AuthDelegateInterface>,
+        std::shared_ptr<avsCommon::sdkInterfaces::ContextManagerInterface>,
+        std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface>,
+        std::shared_ptr<avsCommon::utils::DeviceInfo>,
+        std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>,
+        std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>,
+        std::shared_ptr<registrationManager::CustomerDataManager>,
+        std::shared_ptr<UIManager>>::create(avsAppComponent);
+
+    m_sdkInit = avsAppFactory->get<std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>>();
+    if (!m_sdkInit) {
+        TRACE(AVSClient, (_T("Failed to get SDKInit!")));
+        return false;
+    }
+    
+    auto configEntry = avsAppFactory->get<std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>>();
+    if (!configEntry) {
+        TRACE(AVSClient, (_T("Failed to acquire the configuration")));
+        return false;
+    }
+    auto& config = *configEntry;
+    auto appConfig = config[SAMPLE_APP_CONFIG_KEY];
+
+    auto httpFactory = std::make_shared<avsCommon::utils::libcurlUtils::HTTPContentFetcherFactory>();
+
+     std::shared_ptr<alexaClientSDK::storage::sqliteStorage::SQLiteMiscStorage> miscStorage =
+         alexaClientSDK::storage::sqliteStorage::SQLiteMiscStorage::create(config);
+
+
+    bool equalizerEnabled = false;
+
+    auto speakerInterface = createApplicationMediaPlayer(httpFactory, false, "SpeakMediaPlayer");
+    if (!speakerInterface) {
+        TRACE(AVSClient, (_T("Failed to create application media interfaces for speech!")));
+        return false;
+    }
+    m_speakMediaPlayer = speakerInterface->mediaPlayer;
+
+    int poolSize;
+    appConfig.getInt(AUDIO_MEDIAPLAYER_POOL_SIZE_KEY, &poolSize, AUDIO_MEDIAPLAYER_POOL_SIZE_DEFAULT);
+    std::vector<std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface>> appAudioDevices;
+
+    for (int index = 0; index < poolSize; index++) {
+        // std::shared_ptr<MediaPlayerInterface> mediaPlayer;
+        // std::shared_ptr<avsCommon::sdkInterfaces::SpeakerInterface> speaker;
+        // std::shared_ptr<acsdkEqualizerInterfaces::EqualizerInterface> equalizer;
+
+        auto audioInterface =
+            createApplicationMediaPlayer(httpFactory, equalizerEnabled, "AudioMediaPlayer");
+        if (!audioInterface) {
+            TRACE(AVSClient, (_T("Failed to create application media interfaces for audio!")));
             return false;
         }
+        m_audioMediaPlayerPool.push_back(audioInterface->mediaPlayer);
+        appAudioDevices.push_back(audioInterface->speaker);
+        
+    }
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> notificationsSpeaker;
-        std::tie(m_notificationsMediaPlayer, notificationsSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_ALERTS_VOLUME,
-            "NotificationsMediaPlayer");
-        if (!m_notificationsMediaPlayer || !notificationsSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create NotificationsMediaPlayer")));
-            return false;
-        }
+    avsCommon::utils::Optional<avsCommon::utils::mediaPlayer::Fingerprint> fingerprint =
+        (*(m_audioMediaPlayerPool.begin()))->getFingerprint();
+    auto audioPlayerFactory = std::unique_ptr<mediaPlayer::PooledMediaPlayerFactory>();
+    if (fingerprint.hasValue()) {
+        audioPlayerFactory =
+            mediaPlayer::PooledMediaPlayerFactory::create(m_audioMediaPlayerPool, fingerprint.value());
+    } else {
+        audioPlayerFactory = mediaPlayer::PooledMediaPlayerFactory::create(m_audioMediaPlayerPool);
+    }
+    if (!audioPlayerFactory) {
+        TRACE(AVSClient, (_T("Failed to create media player factory for content!")));
+        return false;
+    }
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> bluetoothSpeaker;
-        std::tie(m_bluetoothMediaPlayer, bluetoothSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-            "BluetoothMediaPlayer");
-        if (!m_bluetoothMediaPlayer || !bluetoothSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create BluetoothMediaPlayer")));
-            return false;
-        }
+    auto notificationInterface =
+        createApplicationMediaPlayer(httpFactory, false, "NotificationsMediaPlayer");
+    if (!notificationInterface) {
+        TRACE(AVSClient, (_T("Failed to create application media interfaces for notifications!")));
+        return false;
+    }
+    m_notificationsMediaPlayer = notificationInterface->mediaPlayer;
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> ringtoneSpeaker;
-        std::tie(m_ringtoneMediaPlayer, ringtoneSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-            "RingtoneMediaPlayer");
-        if (!m_ringtoneMediaPlayer || !ringtoneSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create RingtoneMediaPlayer")));
-            return false;
-        }
+    auto bluetoothInterface =
+        createApplicationMediaPlayer(httpFactory, false, "BluetoothMediaPlayer");
+    if (!bluetoothInterface) {
+        TRACE(AVSClient, (_T("Failed to create application media interfaces for bluetooth!")));
+        return false;
+    }
+    m_bluetoothMediaPlayer = bluetoothInterface->mediaPlayer;
 
-        std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface> systemSoundSpeaker;
-        std::tie(m_systemSoundMediaPlayer, systemSoundSpeaker) = createApplicationMediaPlayer(
-            httpContentFetcherFactory,
-            false,
-            avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-            "SystemSoundMediaPlayer");
-        if (!m_systemSoundMediaPlayer || !systemSoundSpeaker) {
-            TRACE(AVSClient, (_T("Failed to create SystemSoundMediaPlayer")));
-            return false;
-        }
+    auto ringtoneInterface =
+        createApplicationMediaPlayer(httpFactory, false, "RingtoneMediaPlayer");
+    if (!ringtoneInterface) {
+        alexaClientSDK::sampleApp::ConsolePrinter::simplePrint(
+            "Failed to create application media interfaces for ringtones!");
+        return false;
+    }
+    m_ringtoneMediaPlayer = ringtoneInterface->mediaPlayer;
 
-        auto audioFactory = std::make_shared<alexaClientSDK::applicationUtilities::resources::audio::AudioFactory>();
-        if (!audioFactory) {
-            TRACE(AVSClient, (_T("Failed to create audioFactory")));
-            return false;
-        }
 
-        // storage
-        auto authDelegateStorage = authorization::cblAuthDelegate::SQLiteCBLAuthDelegateStorage::create(config);
+    auto alertInterface = createApplicationMediaPlayer(httpFactory, false, "AlertsMediaPlayer");
+    if (!alertInterface) {
+        TRACE(AVSClient, (_T("Failed to create application media interfaces for alerts!")));
+        return false;
+    }
+    m_alertsMediaPlayer = alertInterface->mediaPlayer;
 
-        auto alertStorage = alexaClientSDK::capabilityAgents::alerts::storage::SQLiteAlertStorage::create(config, audioFactory->alerts());
-        if (!alertStorage) {
-            TRACE(AVSClient, (_T("Failed to create alertStorage")));
-            return false;
-        }
+    auto systemAudioInterface =
+        createApplicationMediaPlayer(httpFactory, false, "SystemSoundMediaPlayer");
+    if (!systemAudioInterface) {
+        TRACE(AVSClient, (_T("Failed to create application media interfaces for system sound player!")));
+        return false;
+    }
+    m_systemSoundMediaPlayer = systemAudioInterface->mediaPlayer;
 
-        auto messageStorage = alexaClientSDK::certifiedSender::SQLiteMessageStorage::create(config);
-        if (!messageStorage) {
-            TRACE(AVSClient, (_T("Failed to create messageStorage")));
-            return false;
-        }
 
-        auto notificationsStorage = alexaClientSDK::capabilityAgents::notifications::SQLiteNotificationsStorage::create(config);
-        if (!notificationsStorage) {
-            TRACE(AVSClient, (_T("Failed to create notificationsStorage")));
-            return false;
-        }
 
-        auto deviceSettingsStorage = alexaClientSDK::settings::storage::SQLiteDeviceSettingStorage::create(config);
-        if (!deviceSettingsStorage) {
-            TRACE(AVSClient, (_T("Failed to create deviceSettingsStorage")));
-            return false;
-        }
+    auto appAudio = std::make_shared<alexaClientSDK::applicationUtilities::resources::audio::AudioFactory>();
 
-        std::shared_ptr<storage::sqliteStorage::SQLiteMiscStorage> miscStorage = storage::sqliteStorage::SQLiteMiscStorage::create(config);
-        if (!miscStorage) {
-            TRACE(AVSClient, (_T("Failed to create deviceSettingsStorage")));
-            return false;
-        }
+    auto appAlertStorage =
+        alexaClientSDK::acsdkAlerts::storage::SQLiteAlertStorage::create(config, appAudio->alerts());
 
-        // UI
-        auto localeAssetsManager = sampleApp::LocaleAssetsManager::create(enableKWD);
-        if (!localeAssetsManager) {
-            TRACE(AVSClient, (_T("Failed to create localeAssetsManager")));
-            return false;
-        }
+    auto appMsgStorage = alexaClientSDK::certifiedSender::SQLiteMessageStorage::create(config);
 
-        auto userInterfaceManager = std::make_shared<alexaClientSDK::sampleApp::UIManager>(localeAssetsManager);
-        if (!userInterfaceManager) {
-            TRACE(AVSClient, (_T("Failed to create userInterfaceManager")));
-            return false;
-        }
+    auto appNotifStorage = alexaClientSDK::acsdkNotifications::SQLiteNotificationsStorage::create(config);
 
-        bool displayCardsSupported;
-        config[SAMPLE_APP_CONFIG_KEY].getBool(DISPLAY_CARD_KEY, &displayCardsSupported, true);
+    auto appdevSettingStorage = alexaClientSDK::settings::storage::SQLiteDeviceSettingStorage::create(config);
 
-        // Context
-        auto contextManager = contextManager::ContextManager::create();
-        if (!contextManager) {
-            TRACE(AVSClient, (_T("Failed to create contextManager")));
-            return false;
-        }
+    auto appLocale = avsAppFactory->get<std::shared_ptr<LocaleAssetsManagerInterface>>();
+    if (!appLocale) {
+        TRACE(AVSClient, (_T("Failed to create Locale Assets Manager!")));
+        return false;
+    }
 
-        // AVS Authorization
-        std::shared_ptr<avsCommon::sdkInterfaces::AuthDelegateInterface> authDelegate = authorization::cblAuthDelegate::CBLAuthDelegate::create(
-            config, customerDataManager, std::move(authDelegateStorage), userInterfaceManager, nullptr, deviceInfo);
-        if (!authDelegate) {
-            TRACE(AVSClient, (_T("Failed to create authDelegate")));
-            return false;
-        }
+    auto appUI = avsAppFactory->get<std::shared_ptr<alexaClientSDK::sampleApp::UIManager>>();
+    if (!appUI) {
+        TRACE(AVSClient, (_T("Failed to get UIManager!")));
+        return false;
+    }
 
-        // AVS Connection
-        std::shared_ptr<avsCommon::utils::libcurlUtils::HttpPut> httpPut = avsCommon::utils::libcurlUtils::HttpPut::create();
-        m_capabilitiesDelegate = alexaClientSDK::capabilitiesDelegate::CapabilitiesDelegate::create(
-            authDelegate, miscStorage, httpPut, customerDataManager, config, deviceInfo);
-        if (!m_capabilitiesDelegate) {
-            TRACE(AVSClient, (_T("Failed to create m_capabilitiesDelegate")));
-            return false;
-        }
+    auto appCustDataManager = avsAppFactory->get<std::shared_ptr<registrationManager::CustomerDataManager>>();
+    if (!appCustDataManager) {
+        TRACE(AVSClient, (_T("Failed to get CustomerDataManager!")));
+        return false;
+    }
 
-        auto postConnectSynchronizerFactory = acl::PostConnectSynchronizerFactory::create(contextManager);
-        if (!postConnectSynchronizerFactory) {
-            TRACE(AVSClient, (_T("Failed to create postConnectSynchronizerFactory")));
-            return false;
-        }
+    auto appDevInfo = avsAppFactory->get<std::shared_ptr<avsCommon::utils::DeviceInfo>>();
+    if (!appDevInfo) {
+        TRACE(AVSClient, (_T("Creation of DeviceInfo failed!")));
+        return false;
+    }
 
-        auto internetConnectionMonitor = avsCommon::utils::network::InternetConnectionMonitor::create(httpContentFetcherFactory);
-        if (!internetConnectionMonitor) {
-            TRACE(AVSClient, (_T("Failed to create internetConnectionMonitor")));
-            return false;
-        }
+   
+    alexaClientSDK::avsCommon::utils::uuidGeneration::setSalt(
+        appDevInfo->getClientId() + appDevInfo->getDeviceSerialNumber());
 
-        auto transportFactory = std::make_shared<acl::HTTP2TransportFactory>(
-            std::make_shared<avsCommon::utils::libcurlUtils::LibcurlHTTP2ConnectionFactory>(),
-            postConnectSynchronizerFactory);
-        if (!transportFactory) {
-            TRACE(AVSClient, (_T("Failed to create transportFactory")));
-            return false;
-        }
+   
+    auto appAuthDelegate = avsAppFactory->get<std::shared_ptr<AuthDelegateInterface>>();
+    if (!appAuthDelegate) {
+        TRACE(AVSClient, (_T("Creation of AuthDelegate failed!")));
+        return false;
+    }
 
-        // MAIN CLIENT
-        std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
-            deviceInfo,
-            customerDataManager,
+   
+    auto appCDStorage =
+        alexaClientSDK::capabilitiesDelegate::storage::SQLiteCapabilitiesDelegateStorage::create(config);
+
+    m_capabilitiesDelegate = alexaClientSDK::capabilitiesDelegate::CapabilitiesDelegate::create(
+        appAuthDelegate, std::move(appCDStorage), appCustDataManager);
+
+    if (!m_capabilitiesDelegate) {
+        TRACE(AVSClient, (_T("Creation of CapabilitiesDelegate failed!")));
+        return false;
+    }
+
+    m_shutdownRequiredList.push_back(m_capabilitiesDelegate);
+    appAuthDelegate->addAuthObserver(appUI);
+    m_capabilitiesDelegate->addCapabilitiesObserver(appUI);
+
+    int firmwareVersion = static_cast<int>(avsCommon::sdkInterfaces::softwareInfo::INVALID_FIRMWARE_VERSION);
+    appConfig.getInt(FIRMWARE_VERSION_KEY, &firmwareVersion, firmwareVersion);
+
+    bool displayCardsSupported;
+    config[SAMPLE_APP_CONFIG_KEY].getBool(DISPLAY_CARD_KEY, &displayCardsSupported, true);
+
+    auto appICMonitor =
+        avsCommon::utils::network::InternetConnectionMonitor::create(httpFactory);
+    if (!appICMonitor) {
+        TRACE(AVSClient, (_T("Failed to create InternetConnectionMonitor")));
+        return false;
+    }
+
+    
+    auto appCtxtManager = avsAppFactory->get<std::shared_ptr<ContextManagerInterface>>();
+    if (!appCtxtManager) {
+        TRACE(AVSClient, (_T("Creation of ContextManager failed.")));
+        return false;
+    }
+
+    auto appGWMStorage = avsGatewayManager::storage::AVSGatewayManagerStorage::create(miscStorage);
+    if (!appGWMStorage) {
+        TRACE(AVSClient, (_T("Creation of AVSGatewayManagerStorage failed")));
+        return false;
+    }
+    auto appGWM =
+        avsGatewayManager::AVSGatewayManager::create(std::move(appGWMStorage), appCustDataManager, config);
+    if (!appGWM) {
+        TRACE(AVSClient, (_T("Creation of AVSGatewayManager failed")));
+        return false;
+    }
+
+    auto appSynStateFactory = synchronizeStateSender::SynchronizeStateSenderFactory::create(appCtxtManager);
+    if (!appSynStateFactory) {
+        TRACE(AVSClient, (_T("Creation of SynchronizeStateSenderFactory failed")));
+        return false;
+    }
+
+    std::vector<std::shared_ptr<avsCommon::sdkInterfaces::PostConnectOperationProviderInterface>> providers;
+    providers.push_back(appSynStateFactory);
+    providers.push_back(appGWM);
+    providers.push_back(m_capabilitiesDelegate);
+
+    
+    auto postConnectSequencerFactory = acl::PostConnectSequencerFactory::create(providers);
+
+
+    auto httpTransport = std::make_shared<acl::HTTP2TransportFactory>(
+        std::make_shared<avsCommon::utils::libcurlUtils::LibcurlHTTP2ConnectionFactory>(),
+        postConnectSequencerFactory,
+        nullptr,
+        nullptr);
+
+   
+    size_t bufferSize = alexaClientSDK::avsCommon::avs::AudioInputStream::calculateBufferSize(
+        BUFFER_SIZE_IN_SAMPLES, WORD_SIZE, MAX_READERS);
+    auto tmpBuffer = std::make_shared<alexaClientSDK::avsCommon::avs::AudioInputStream::Buffer>(bufferSize);
+    std::shared_ptr<alexaClientSDK::avsCommon::avs::AudioInputStream> sharedAudioStream =
+        alexaClientSDK::avsCommon::avs::AudioInputStream::create(tmpBuffer, WORD_SIZE, MAX_READERS);
+
+    if (!sharedAudioStream) {
+        TRACE(AVSClient, (_T("Failed to create shared data stream!")));
+        return false;
+    }
+
+
+    alexaClientSDK::avsCommon::utils::AudioFormat audioFormat;
+    audioFormat.sampleRateHz = SAMPLE_RATE_HZ;
+    audioFormat.sampleSizeInBits = WORD_SIZE * CHAR_BIT;
+    audioFormat.numChannels = NUM_CHANNELS;
+    audioFormat.endianness = alexaClientSDK::avsCommon::utils::AudioFormat::Endianness::LITTLE;
+    audioFormat.encoding = alexaClientSDK::avsCommon::utils::AudioFormat::Encoding::LPCM;
+
+    
+    alexaClientSDK::capabilityAgents::aip::AudioProvider appTaptoTalkProvider(
+        sharedAudioStream,
+        audioFormat,
+        alexaClientSDK::capabilityAgents::aip::ASRProfile::NEAR_FIELD,
+        true,
+        true,
+        true);
+
+    alexaClientSDK::capabilityAgents::aip::AudioProvider appHoldtoTalkProvider(
+        sharedAudioStream,
+        audioFormat,
+        alexaClientSDK::capabilityAgents::aip::ASRProfile::CLOSE_TALK,
+        false,
+        true,
+        false);
+
+    auto metrics = avsAppFactory->get<std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>>();
+ 
+    
+
+std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client =
+        alexaClientSDK::defaultClient::DefaultClient::create(
+            appDevInfo,
+            appCustDataManager,
             m_externalMusicProviderMediaPlayersMap,
             m_externalMusicProviderSpeakersMap,
             m_adapterToCreateFuncMap,
             m_speakMediaPlayer,
-            m_audioMediaPlayer,
+            std::move(audioPlayerFactory),
             m_alertsMediaPlayer,
             m_notificationsMediaPlayer,
             m_bluetoothMediaPlayer,
             m_ringtoneMediaPlayer,
             m_systemSoundMediaPlayer,
-            speakSpeaker,
-            audioSpeaker,
-            alertsSpeaker,
-            notificationsSpeaker,
-            bluetoothSpeaker,
-            ringtoneSpeaker,
-            systemSoundSpeaker,
-            std::vector<std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::SpeakerInterface>>(),
-            nullptr,
-            audioFactory,
-            authDelegate,
-            std::move(alertStorage),
-            std::move(messageStorage),
-            std::move(notificationsStorage),
-            std::move(deviceSettingsStorage),
-            nullptr,
-            std::move(miscStorage),
-            { userInterfaceManager },
-            { userInterfaceManager },
-            std::move(internetConnectionMonitor),
+            speakerInterface->speaker,
+            appAudioDevices,
+            alertInterface->speaker,
+            notificationInterface->speaker,
+            bluetoothInterface->speaker,
+            ringtoneInterface->speaker,
+            systemAudioInterface->speaker,
+            {},
+            nullptr, //equalizerRuntimeSetup,
+            appAudio,
+            appAuthDelegate,
+            std::move(appAlertStorage),
+            std::move(appMsgStorage),
+            std::move(appNotifStorage),
+            std::move(appdevSettingStorage),
+            nullptr, //std::move(bluetoothStorage),
+            miscStorage,
+            {appUI},
+            {appUI},
+            std::move(appICMonitor),
             displayCardsSupported,
             m_capabilitiesDelegate,
-            contextManager,
-            transportFactory,
-            localeAssetsManager,
-            nullptr,
+            appCtxtManager,
+            httpTransport,
+            appGWM,
+            appLocale,
+            {}, //enabledConnectionRules,
+            /* systemTimezone*/ nullptr,
             firmwareVersion,
             true,
             nullptr,
-            nullptr);
+            nullptr, //std::move(bluetoothDeviceManager),
+            metrics,
+            nullptr,
+            nullptr, //diagnostics,
+            std::make_shared<alexaClientSDK::sampleApp::ExternalCapabilitiesBuilder>(appDevInfo),
+            std::make_shared<alexaClientSDK::capabilityAgents::speakerManager::DefaultChannelVolumeFactory>(),
+            true,
+            std::make_shared<alexaClientSDK::acl::MessageRouterFactory>(),
+            nullptr,
+            appTaptoTalkProvider);
 
-        if (!client) {
-            TRACE(AVSClient, (_T("Failed to create default SDK client")));
-            return false;
-        }
 
-        client->addSpeakerManagerObserver(userInterfaceManager);
-        client->addNotificationsObserver(userInterfaceManager);
-        userInterfaceManager->configureSettingsNotifications(client->getSettingsManager());
+    if (!client) {
+        TRACE(AVSClient, (_T("Failed to create default SDK client!")));
+        return false;
+    }
+    
+    client->addSpeakerManagerObserver(appUI);
 
-        if (displayCardsSupported) {
-            m_guiRenderer = std::make_shared<sampleApp::GuiRenderer>();
-            client->addTemplateRuntimeObserver(m_guiRenderer);
-        }
+    client->addNotificationsObserver(appUI);
 
-        // Shared Data stream
-        size_t bufferSize = alexaClientSDK::avsCommon::avs::AudioInputStream::calculateBufferSize(
-            BUFFER_SIZE_IN_SAMPLES, WORD_SIZE, MAX_READERS);
-        auto buffer = std::make_shared<alexaClientSDK::avsCommon::avs::AudioInputStream::Buffer>(bufferSize);
-        std::shared_ptr<alexaClientSDK::avsCommon::avs::AudioInputStream> sharedDataStream = alexaClientSDK::avsCommon::avs::AudioInputStream::create(buffer, WORD_SIZE, MAX_READERS);
-        if (!sharedDataStream) {
-            TRACE(AVSClient, (_T("Failed to create sharedDataStream")));
-            return false;
-        }
+    m_shutdownManager = client->getShutdownManager();
+    if (!m_shutdownManager) {
+        TRACE(AVSClient, (_T("Failed to get ShutdownManager!")));
+        return false;
+    }
 
-        // Audio providers
-        alexaClientSDK::avsCommon::utils::AudioFormat compatibleAudioFormat;
-        compatibleAudioFormat.sampleRateHz = SAMPLE_RATE_HZ;
-        compatibleAudioFormat.sampleSizeInBits = WORD_SIZE * CHAR_BIT;
-        compatibleAudioFormat.numChannels = NUM_CHANNELS;
-        compatibleAudioFormat.endianness = alexaClientSDK::avsCommon::utils::AudioFormat::Endianness::LITTLE;
-        compatibleAudioFormat.encoding = alexaClientSDK::avsCommon::utils::AudioFormat::Encoding::LPCM;
+    appUI->configureSettingsNotifications(client->getSettingsManager());
 
-        alexaClientSDK::capabilityAgents::aip::AudioProvider tapToTalkAudioProvider(
-            sharedDataStream,
-            compatibleAudioFormat,
-            alexaClientSDK::capabilityAgents::aip::ASRProfile::NEAR_FIELD,
-            true, // alwaysReadable
-            true, // canOverride
-            true); // canBeOverridden
-
-        alexaClientSDK::capabilityAgents::aip::AudioProvider holdToTalkAudioProvider(
-            sharedDataStream,
-            compatibleAudioFormat,
-            alexaClientSDK::capabilityAgents::aip::ASRProfile::CLOSE_TALK,
-            false, // alwaysReadable
-            true, // canOverride
-            false); // canBeOverridden
-
-        alexaClientSDK::capabilityAgents::aip::AudioProvider wakeWordAudioProvider(capabilityAgents::aip::AudioProvider::null());
-#if defined(KWD_PRYON)
-        if (enableKWD) {
-            wakeWordAudioProvider = alexaClientSDK::capabilityAgents::aip::AudioProvider(sharedDataStream,
-                compatibleAudioFormat,
-                alexaClientSDK::capabilityAgents::aip::ASRProfile::NEAR_FIELD,
-                true, // alwaysReadable
-                false, // canOverride
-                true); // canBeOverridden
-        }
-#endif
+    /*
+     * Add GUI Renderer as an observer if display cards are supported.
+     */
+    if (displayCardsSupported) {
+        m_guiRenderer = std::make_shared<GuiRenderer>();
+        client->addTemplateRuntimeObserver(m_guiRenderer);
+    }
 
         // Audio input
         std::shared_ptr<applicationUtilities::resources::audio::MicrophoneInterface> aspInput = nullptr;
@@ -450,7 +531,7 @@ namespace Plugin {
 
         if (audiosource == PORTAUDIO_CALLSIGN) {
 #if defined(PORTAUDIO)
-            aspInput = sampleApp::PortAudioMicrophoneWrapper::create(sharedDataStream);
+            aspInput = sampleApp::PortAudioMicrophoneWrapper::create(sharedAudioStream);
 #else
             TRACE(AVSClient, (_T("Portaudio support is not compiled in")));
             return false;
@@ -462,7 +543,7 @@ namespace Plugin {
                 return false;
             }
 
-            m_thunderVoiceHandler = ThunderVoiceHandler<alexaClientSDK::sampleApp::InteractionManager>::create(sharedDataStream, _service, audiosource, aspInputInteractionHandler, compatibleAudioFormat);
+            m_thunderVoiceHandler = ThunderVoiceHandler<alexaClientSDK::sampleApp::InteractionManager>::create(sharedAudioStream, _service, audiosource, aspInputInteractionHandler, audioFormat);
             aspInput = m_thunderVoiceHandler;
             aspInput->startStreamingMicrophoneData();
         }
@@ -471,29 +552,58 @@ namespace Plugin {
             return false;
         }
 
-        // Key Word Detection
 #if defined(KWD_PRYON)
-        if (enableKWD) {
-            auto keywordObserver = std::make_shared<alexaClientSDK::sampleApp::KeywordObserver>(client, wakeWordAudioProvider);
-            m_keywordDetector = PryonKeywordDetector::create(
-                sharedDataStream,
-                compatibleAudioFormat,
-                { keywordObserver },
-                std::unordered_set<
-                    std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::KeyWordDetectorStateObserverInterface>>(),
-                pathToInputFolder);
-            if (!m_keywordDetector) {
-                TRACE(AVSClient, (_T("Failed to create m_keywordDetector")));
-                return false;
-            }
-        }
+    if (enableKWD) {
+    alexaClientSDK::capabilityAgents::aip::AudioProvider appWakeWordProvider(
+        sharedAudioStream,
+        audioFormat,
+        alexaClientSDK::capabilityAgents::aip::ASRProfile::NEAR_FIELD,
+        true,
+        false,
+        true);
+
+    auto kwObserver = std::make_shared<alexaClientSDK::sampleApp::KeywordObserver>(client, appWakeWordProvider);
+
+    m_keywordDetector = PryonKeywordDetector::create(
+        sharedAudioStream,
+        audioFormat,
+        {kwObserver},
+        std::unordered_set<
+            std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::KeyWordDetectorStateObserverInterface>>(),
+        pathToInputFolder);
+    if (!m_keywordDetector) {
+        TRACE(AVSClient, (_T("Failed to create keyword detector!")));
+    }
+        
+
+    m_interactionManager = std::make_shared<alexaClientSDK::sampleApp::InteractionManager>(
+        client,
+        aspInput,
+        appUI,
+        appHoldtoTalkProvider,
+        appTaptoTalkProvider,
+        m_guiRenderer,
+        appWakeWordProvider,
+        nullptr,
+        nullptr); //diagnostics);
+}
+#else
+    m_interactionManager = std::make_shared<alexaClientSDK::sampleApp::InteractionManager>(
+        client,
+        aspInput,
+        appUI,
+        appHoldtoTalkProvider,
+        appTaptoTalkProvider,
+        m_guiRenderer,
+        capabilityAgents::aip::AudioProvider::null(),
+        nullptr,
+        nullptr ); //diagnostics);
 #endif
-        // Interaction Manager
-        m_interactionManager = std::make_shared<alexaClientSDK::sampleApp::InteractionManager>(client, aspInput, userInterfaceManager, holdToTalkAudioProvider, tapToTalkAudioProvider, m_guiRenderer, wakeWordAudioProvider);
 
-        client->addAlexaDialogStateObserver(m_interactionManager);
-
-        if (audiosource != PORTAUDIO_CALLSIGN) {
+    m_shutdownRequiredList.push_back(m_interactionManager);
+    client->addAlexaDialogStateObserver(m_interactionManager);
+    client->addCallStateObserver(m_interactionManager);
+    if (audiosource != PORTAUDIO_CALLSIGN) {
             if (aspInputInteractionHandler) {
                 // register interactions that ThunderVoiceHandler may initiate
                 if (!aspInputInteractionHandler->Initialize(m_interactionManager)) {
@@ -503,28 +613,28 @@ namespace Plugin {
             }
         }
 
-        // Thunder Input Manager
-        m_thunderInputManager = ThunderInputManager::create(m_interactionManager);
-        if (!m_thunderInputManager) {
-            TRACE(AVSClient, (_T("Failed to create m_thunderInputManager")));
-            return false;
-        }
-
-        authDelegate->addAuthObserver(m_thunderInputManager);
-        client->addAlexaDialogStateObserver(m_thunderInputManager);
-        client->getRegistrationManager()->addObserver(m_thunderInputManager);
-        m_capabilitiesDelegate->addCapabilitiesObserver(client);
-        m_capabilitiesDelegate->addCapabilitiesObserver(m_thunderInputManager);
-
-        // START
-        std::string endpoint;
-        config.getString(ENDPOINT_KEY, &endpoint);
-        client->connect(m_capabilitiesDelegate, endpoint);
-
-        return true;
+    // Thunder Input Manager
+    m_thunderInputManager = ThunderInputManager::create(m_interactionManager);
+    if (!m_thunderInputManager) {
+        TRACE(AVSClient, (_T("Failed to create m_thunderInputManager")));
+        return false;
+    }
+    
+    appAuthDelegate->addAuthObserver(m_thunderInputManager);
+    client->addAlexaDialogStateObserver(m_thunderInputManager);
+    client->getRegistrationManager()->addObserver(m_thunderInputManager);
+    client->addTemplateRuntimeObserver(m_thunderInputManager);
+    //client->addMessageObserver(m_thunderInputManager);
+    m_capabilitiesDelegate->addCapabilitiesObserver(m_thunderInputManager);
+    
+    client->connect();
+    TRACE_L1("DEBUGLOG: Line count: 1, END");
+    return true;
     }
 
-    bool AVSDevice::InitSDKLogs(const string& logLevel)
+ 
+  
+  bool AVSDevice::InitSDKLogs(const string& logLevel)
     {
         bool status = true;
         std::shared_ptr<avsCommon::utils::logger::Logger> thunderLogger = avsCommon::utils::logger::getThunderLogger();
@@ -565,11 +675,12 @@ namespace Plugin {
         }
 
         streams.push_back(configStream);
+        return true;
     }
 
     bool AVSDevice::Deinitialize()
     {
-        TRACE_L1(_T("Deinitialize()"))
+        TRACE_L1(_T("Deinitialize()"));
 
         return true;
     }

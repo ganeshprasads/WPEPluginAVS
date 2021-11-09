@@ -34,6 +34,7 @@ list(APPEND WPEFRAMEWORK_PLUGIN_AVS_SMARTSCREEN_SOURCES
     SmartScreen.cpp
     ../Module.cpp
     ../ThunderLogger.cpp
+    ../ThunderInputManager.cpp
 )
 
 if(PLUGIN_AVS_ENABLE_KWD_SUPPORT)
@@ -52,6 +53,8 @@ target_include_directories(${MODULE_NAME}
     PUBLIC
         ../
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+        "${AVSDSDK_INCLUDE_DIRS}"
+        "${THUNDER_INCLUDE_DIRS}"
         ${ALEXA_CLIENT_SDK_INCLUDES}
         ${ALEXA_SMART_SCREEN_SDK_INCLUDES})
 
